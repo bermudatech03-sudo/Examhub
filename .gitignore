@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# SSL certs (generated locally)
+infrastructure/nginx/ssl/*.pem
+infrastructure/nginx/ssl/*.crt
+infrastructure/nginx/ssl/*.key
+
+# Prisma generated
+backend/node_modules/
+
+# Next.js
+frontend/.next/

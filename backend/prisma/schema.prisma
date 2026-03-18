@@ -1,0 +1,559 @@
+// ExamHub - Production Database Schema
+// PostgreSQL via Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  EXAMINER
+  CANDIDATE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  SHORT_ANSWER
+  ESSAY
+  CODING
+  FILE_UPLOAD
+}
+
+enum DifficultyLevel {
+  EASY
+  MEDIUM
+  HARD
+  EXPERT
+}
+
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum AttemptStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED
+  EVALUATED
+  DISQUALIFIED
+}
+
+enum CheatingViolationType {
+  TAB_SWITCH
+  FULLSCREEN_EXIT
+  RIGHT_CLICK
+  COPY_PASTE
+  KEYBOARD_SHORTCUT
+  FACE_NOT_DETECTED
+  MULTIPLE_FACES
+  SUSPICIOUS_AUDIO
+}
+
+enum NotificationType {
+  EMAIL
+  IN_APP
+  SMS
+}
+
+enum CodingLanguage {
+  PYTHON
+  JAVA
+  CPP
+  JAVASCRIPT
+}
+
+enum SubmissionStatus {
+  PENDING
+  RUNNING
+  ACCEPTED
+  WRONG_ANSWER
+  TIME_LIMIT_EXCEEDED
+  MEMORY_LIMIT_EXCEEDED
+  RUNTIME_ERROR
+  COMPILATION_ERROR
+}
+
+enum ResultStatus {
+  PASS
+  FAIL
+  PENDING
+}
+
+// ============================================================
+// ORGANIZATIONS
+// ============================================================
+
+model Organization {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  domain          String?  @unique
+  logoUrl         String?
+  primaryColor    String   @default("#ff9900")
+  maxCandidates   Int      @default(100)
+  maxExams        Int      @default(10)
+  subscriptionTier String  @default("FREE")
+  subscriptionEndsAt DateTime?
+  isActive        Boolean  @default(true)
+  settings        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  users     User[]
+  exams     Exam[]
+  questions Question[]
+  certificates Certificate[]
+  notifications Notification[]
+
+  @@map("organizations")
+}
+
+// ============================================================
+// USERS
+// ============================================================
+
+model User {
+  id             String     @id @default(cuid())
+  email          String     @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  avatarUrl      String?
+  role           UserRole   @default(CANDIDATE)
+  status         UserStatus @default(PENDING_VERIFICATION)
+  organizationId String?
+  emailVerified  Boolean    @default(false)
+  verifyToken    String?
+  resetToken     String?
+  resetTokenExpiry DateTime?
+  lastLoginAt    DateTime?
+  metadata       Json       @default("{}")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  sessions       UserSession[]
+  createdExams   Exam[]        @relation("ExamCreator")
+  attempts       ExamAttempt[]
+  cheatingLogs   CheatingLog[]
+  certificates   Certificate[]
+  notifications  Notification[]
+  securityLogs   SecurityLog[]
+  questionBank   Question[]    @relation("QuestionCreator")
+
+  @@map("users")
+}
+
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+}
+
+// ============================================================
+// QUESTION BANK
+// ============================================================
+
+model Tag {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  color     String   @default("#ff9900")
+  createdAt DateTime @default(now())
+
+  questions QuestionTag[]
+
+  @@map("tags")
+}
+
+model QuestionTag {
+  questionId String
+  tagId      String
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, tagId])
+  @@map("question_tags")
+}
+
+model Question {
+  id             String          @id @default(cuid())
+  organizationId String?
+  createdById    String
+  type           QuestionType
+  difficulty     DifficultyLevel @default(MEDIUM)
+  subject        String?
+  title          String
+  content        String
+  explanation    String?
+  points         Float           @default(1.0)
+  timeLimit      Int?            // seconds
+  isPublic       Boolean         @default(false)
+  isActive       Boolean         @default(true)
+  metadata       Json            @default("{}")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization   Organization?   @relation(fields: [organizationId], references: [id])
+  createdBy      User            @relation("QuestionCreator", fields: [createdById], references: [id])
+  tags           QuestionTag[]
+  options        QuestionOption[]
+  examQuestions  ExamQuestion[]
+  answers        Answer[]
+  codingProblem  CodingProblem?
+
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String   @id @default(cuid())
+  questionId String
+  content    String
+  isCorrect  Boolean  @default(false)
+  orderIndex Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("question_options")
+}
+
+model CodingProblem {
+  id           String         @id @default(cuid())
+  questionId   String         @unique
+  languages    CodingLanguage[]
+  boilerplate  Json           @default("{}") // per language
+  testCases    Json           // array of {input, expectedOutput, isHidden}
+  timeLimit    Int            @default(5000) // ms
+  memoryLimit  Int            @default(256)  // MB
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("coding_problems")
+}
+
+// ============================================================
+// EXAMS
+// ============================================================
+
+model Exam {
+  id               String     @id @default(cuid())
+  organizationId   String
+  createdById      String
+  title            String
+  description      String?
+  instructions     String?
+  status           ExamStatus @default(DRAFT)
+  duration         Int        // minutes
+  totalPoints      Float      @default(0)
+  passingScore     Float      @default(60.0) // percentage
+  maxAttempts      Int        @default(1)
+  shuffleQuestions Boolean    @default(false)
+  shuffleOptions   Boolean    @default(false)
+  showResults      Boolean    @default(true)
+  showCorrectAnswers Boolean  @default(false)
+  isProctored      Boolean    @default(true)
+  allowBacktrack   Boolean    @default(true)
+  startsAt         DateTime?
+  endsAt           DateTime?
+  accessCode       String?
+  thumbnailUrl     String?
+  category         String?
+  tags             String[]
+  settings         Json       @default("{}")
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  createdBy    User           @relation("ExamCreator", fields: [createdById], references: [id])
+  questions    ExamQuestion[]
+  attempts     ExamAttempt[]
+  invitations  ExamInvitation[]
+  results      Result[]
+
+  @@map("exams")
+}
+
+model ExamQuestion {
+  id         String @id @default(cuid())
+  examId     String
+  questionId String
+  orderIndex Int    @default(0)
+  points     Float? // override question default
+  createdAt  DateTime @default(now())
+
+  exam     Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id])
+
+  @@unique([examId, questionId])
+  @@map("exam_questions")
+}
+
+model ExamInvitation {
+  id        String   @id @default(cuid())
+  examId    String
+  email     String
+  token     String   @unique
+  usedAt    DateTime?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@map("exam_invitations")
+}
+
+// ============================================================
+// EXAM ATTEMPTS
+// ============================================================
+
+model ExamAttempt {
+  id              String        @id @default(cuid())
+  examId          String
+  candidateId     String
+  status          AttemptStatus @default(NOT_STARTED)
+  startedAt       DateTime?
+  submittedAt     DateTime?
+  timeSpent       Int?          // seconds
+  ipAddress       String?
+  userAgent       String?
+  violationCount  Int           @default(0)
+  isDisqualified  Boolean       @default(false)
+  disqualifiedAt  DateTime?
+  disqualifyReason String?
+  proctorData     Json          @default("{}")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  exam         Exam          @relation(fields: [examId], references: [id])
+  candidate    User          @relation(fields: [candidateId], references: [id])
+  answers      Answer[]
+  cheatingLogs CheatingLog[]
+  result       Result?
+
+  @@map("exam_attempts")
+}
+
+model Answer {
+  id              String   @id @default(cuid())
+  attemptId       String
+  questionId      String
+  selectedOptions String[] // option IDs for MCQ
+  textAnswer      String?  // for essay/short answer
+  isCorrect       Boolean?
+  pointsAwarded   Float    @default(0)
+  timeSpent       Int?     // seconds on this question
+  flagged         Boolean  @default(false)
+  gradingNotes    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  attempt    ExamAttempt    @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question   Question       @relation(fields: [questionId], references: [id])
+  codeSubmission CodingSubmission?
+
+  @@unique([attemptId, questionId])
+  @@map("answers")
+}
+
+model CodingSubmission {
+  id           String           @id @default(cuid())
+  answerId     String           @unique
+  language     CodingLanguage
+  code         String
+  status       SubmissionStatus @default(PENDING)
+  executionTime Int?            // ms
+  memoryUsed   Int?             // MB
+  testResults  Json             @default("[]")
+  errorMessage String?
+  submittedAt  DateTime         @default(now())
+  evaluatedAt  DateTime?
+
+  answer Answer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+
+  @@map("coding_submissions")
+}
+
+// ============================================================
+// ANTI-CHEATING
+// ============================================================
+
+model CheatingLog {
+  id          String                @id @default(cuid())
+  attemptId   String
+  userId      String
+  type        CheatingViolationType
+  description String?
+  metadata    Json                  @default("{}")
+  screenshotUrl String?
+  timestamp   DateTime              @default(now())
+
+  attempt ExamAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id])
+
+  @@map("cheating_logs")
+}
+
+// ============================================================
+// RESULTS
+// ============================================================
+
+model Result {
+  id              String       @id @default(cuid())
+  examId          String
+  attemptId       String       @unique
+  candidateId     String
+  totalPoints     Float
+  earnedPoints    Float
+  percentage      Float
+  status          ResultStatus
+  rank            Int?
+  percentile      Float?
+  timeTaken       Int?         // seconds
+  gradedAt        DateTime?
+  gradedById      String?
+  feedback        String?
+  isPublished     Boolean      @default(false)
+  publishedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  exam        Exam        @relation(fields: [examId], references: [id])
+  attempt     ExamAttempt @relation(fields: [attemptId], references: [id])
+  certificate Certificate?
+
+  @@map("results")
+}
+
+// ============================================================
+// CERTIFICATES
+// ============================================================
+
+model Certificate {
+  id             String   @id @default(cuid())
+  resultId       String   @unique
+  userId         String
+  organizationId String
+  examTitle      String
+  candidateName  String
+  score          Float
+  grade          String?
+  issuedAt       DateTime @default(now())
+  expiresAt      DateTime?
+  verifyCode     String   @unique
+  pdfUrl         String?
+  templateData   Json     @default("{}")
+
+  result       Result       @relation(fields: [resultId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("certificates")
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+model Notification {
+  id             String           @id @default(cuid())
+  userId         String
+  organizationId String?
+  type           NotificationType
+  title          String
+  body           String
+  data           Json             @default("{}")
+  isRead         Boolean          @default(false)
+  readAt         DateTime?
+  sentAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@map("notifications")
+}
+
+// ============================================================
+// SECURITY LOGGING
+// ============================================================
+
+model SecurityLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  resource   String?
+  ipAddress  String?
+  userAgent  String?
+  statusCode Int?
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("security_logs")
+}
+
+// ============================================================
+// SYSTEM SETTINGS
+// ============================================================
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  isPublic  Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model BulkImportJob {
+  id           String   @id @default(cuid())
+  type         String   // 'questions' | 'users' | 'candidates'
+  status       String   @default("PENDING")
+  totalRows    Int      @default(0)
+  processedRows Int     @default(0)
+  failedRows   Int      @default(0)
+  errors       Json     @default("[]")
+  fileUrl      String?
+  createdById  String
+  organizationId String?
+  createdAt    DateTime @default(now())
+  completedAt  DateTime?
+
+  @@map("bulk_import_jobs")
+}
