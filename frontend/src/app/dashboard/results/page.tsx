@@ -76,7 +76,7 @@ export default function ResultsPage() {
               </div>
 
               {result.certificate && (
-                <Award size={18} className="text-accent shrink-0" title="Certificate available" />
+                <Award size={18} className="text-accent shrink-0" aria-label="Certificate available" />
               )}
             </Link>
           ))}
